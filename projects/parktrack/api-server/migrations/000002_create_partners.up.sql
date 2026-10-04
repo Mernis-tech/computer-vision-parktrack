@@ -1,0 +1,10 @@
+CREATE TABLE IF NOT EXISTS partners (
+    partner_id SERIAL PRIMARY KEY,
+    legal_name VARCHAR(255) UNIQUE NOT NULL,
+    slug VARCHAR(255) UNIQUE NOT NULL,
+    contact_email VARCHAR(255) UNIQUE NOT NULL,
+    contact_phone VARCHAR(255) UNIQUE NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);

@@ -1,0 +1,39 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Node.js
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# IDE and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Runtime data
+data/
+output/
+runs/
+logs/
+*.log
+postgres_data/
+minio_data/
+
+# Local media and generated snapshots
+camera-snapshots/
+projects/our-model/camera_output/

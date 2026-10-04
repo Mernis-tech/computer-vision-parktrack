@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:18.3
+    container_name: postgres_db
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 1m
+      retries: 5
+      start_period: 30s
+  
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    container_name: migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    restart: no
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    container_name: app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    restart: unless-stopped

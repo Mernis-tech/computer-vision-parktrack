@@ -1,0 +1,17 @@
+FROM golang:1.26-alpine AS seqwall-builder
+RUN go install github.com/realkarych/seqwall@latest
+FROM migrate/migrate:latest AS migrate-bin
+
+FROM alpine:latest
+
+RUN apk add --no-cache bash postgresql-client
+COPY --from=migrate-bin /usr/local/bin/migrate /usr/local/bin/migrate
+COPY --from=seqwall-builder /go/bin/seqwall /usr/local/bin/seqwall
+
+WORKDIR /app
+COPY migrations ./migrations
+COPY scripts ./scripts
+RUN sed -i 's/\r$//' ./scripts/*.sh \
+ && chmod +x ./scripts/*.sh
+
+ENTRYPOINT [ "bash", "./scripts/db_entrypoint.sh" ]

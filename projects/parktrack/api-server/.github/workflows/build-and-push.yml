@@ -1,0 +1,117 @@
+name: Build and push Docker image
+
+on:
+  push:
+    branches: ["main", "development"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  IS_DEFAULT: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        if: env.REGISTRY == 'ghcr.io'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Generic path for future non-GHCR registries
+      - name: Log in to external registry
+        if: env.REGISTRY != 'ghcr.io'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Extract metadata [app]
+        id: meta-app
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-app
+          tags: |
+            type=raw,value=development,enable=${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=sha,format=short
+
+      - name: Build and push [app]
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile.app
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-app.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      - name: Extract metadata [migrate]
+        id: meta-migrate
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-migrate
+          tags: |
+            type=raw,value=development,enable=${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=sha,format=short
+
+      - name: Build and push [migrate]
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile.migrate
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-migrate.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+  deploy:
+    needs:
+      - build-and-push
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            if [ "${{ env.IS_DEFAULT }}" = "true" ]; then
+              cd ${{ secrets.COMPOSE_DIRECTORY_PATH }}
+              docker compose up -d
+            else
+              cd ${{ secrets.DEVELOPMENT_COMPOSE_DIRECTORY_PATH }}
+              docker compose -p parktrack-dev up -d
+            fi

@@ -1,0 +1,141 @@
+name: parktrack-local
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5252:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    image: migrate/migrate:v4.18.3
+    command:
+      - -path=/migrations
+      - -database=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      - up
+    volumes:
+      - ./api-server/migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+    entrypoint: ["/bin/sh", "/bootstrap/init-minio.sh"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      SNAPSHOT_S3_BUCKET: ${SNAPSHOT_S3_BUCKET}
+    volumes:
+      - ./local/bootstrap:/bootstrap:ro
+    depends_on:
+      - minio
+    restart: "no"
+
+  api:
+    build:
+      context: ./api-server
+      dockerfile: Dockerfile.app
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      API_TOKEN: ${API_TOKEN}
+      JWT_SECRET: ${JWT_SECRET}
+      PASSWORD_RESET_RETURN_TOKEN: "1"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./test-media:/media:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  bootstrap:
+    image: python:3.11-alpine
+    command: ["python", "/bootstrap/bootstrap.py"]
+    environment:
+      API_URL: http://api:8000/api/v1
+      API_TOKEN: ${API_TOKEN}
+      DEMO_VIDEO_SOURCE: /media/demo-parking.mp4
+      DEMO_ADMIN_EMAIL: ${DEMO_ADMIN_EMAIL}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD}
+    volumes:
+      - ./local/bootstrap:/bootstrap:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: "no"
+
+  admin-panel:
+    build:
+      context: ./admin-panel
+      args:
+        VITE_API_BASE_URL: http://127.0.0.1:8000/api/v1
+    ports:
+      - "5173:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  detector:
+    build:
+      context: ./car-detector
+    environment:
+      API_URL: http://api:8000/api/v1
+      API_TOKEN: ${API_TOKEN}
+      CAR_DETECTOR_WORKERS_COUNT: "1"
+      CAR_DETECTOR_LOOP_DELAY_SECONDS: "60"
+      SNAPSHOT_S3_BUCKET: ${SNAPSHOT_S3_BUCKET}
+      SNAPSHOT_S3_PREFIX: camera-snapshots
+      SNAPSHOT_S3_ENDPOINT_URL: http://minio:9000
+      SNAPSHOT_PUBLIC_BASE_URL: http://127.0.0.1:9000/${SNAPSHOT_S3_BUCKET}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_DEFAULT_REGION: us-east-1
+    volumes:
+      - ./test-media:/media:ro
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  minio_data:
